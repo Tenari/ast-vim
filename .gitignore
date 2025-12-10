@@ -2,3 +2,4 @@ build/editor
 build/editor.dSYM/
 tree-sitter-c/
 tree-sitter/
+*.swp

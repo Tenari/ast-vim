@@ -247,7 +247,7 @@ fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node) {
   return result;
 }
 
-fn bool update(void* state, u8* input_buffer, u64 loop_count) {
+fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_count) {
   State* s = (State*)state;
   bool left_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 68;
   bool right_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 67;
@@ -304,26 +304,18 @@ fn bool update(void* state, u8* input_buffer, u64 loop_count) {
     } break;
   }
 
-  return s->should_quit;
-}
-
-fn bool renderFrame(TuiState* tui, void* s, u64 loop_count) {
-  ScratchMem scratch = scratchGet();
-  State* state = (State*)s;
-
   // indicate if we saved
-  if (state->saved_on && (loop_count - state->saved_on < 100)) {
+  if (s->saved_on && (loop_count - s->saved_on < 100)) {
     renderStrToBuffer(tui->frame_buffer, 1, 0, "saved", tui->screen_dimensions);
   }
   // indicate what mode we are in
-  renderStrToBuffer(tui->frame_buffer, 0, 0, MODE_STRINGS[state->mode], tui->screen_dimensions);
+  renderStrToBuffer(tui->frame_buffer, 0, 0, MODE_STRINGS[s->mode], tui->screen_dimensions);
   // MAIN RENDER of CODE TREE
-  renderFunctionNode(tui, 2, 2, state->function_node);
-  tui->cursor.x = state->selected_node->render_start.x;
-  tui->cursor.y = state->selected_node->render_start.y;
+  renderFunctionNode(tui, 2, 2, s->function_node);
+  tui->cursor.x = s->selected_node->render_start.x;
+  tui->cursor.y = s->selected_node->render_start.y;
 
-  scratchReturn(&scratch);
-  return state->should_quit;
+  return s->should_quit;
 }
 
 i32 main(i32 argc, ptr argv[]) {
@@ -361,8 +353,7 @@ i32 main(i32 argc, ptr argv[]) {
     MAX_SCREEN_HEIGHT,
     GOAL_INPUT_LOOP_US,
     &state,
-    update,
-    renderFrame
+    updateAndRender
   );
 
   //ts_tree_delete(tree);

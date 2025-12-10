@@ -313,8 +313,8 @@ fn void infiniteUILoop(
   u32 max_screen_height,
   u64 goal_input_loop_us,
   void* state,
-  bool (*update)(void* state, u8* input_buffer, u64 loop_count),
-  bool (*render)(TuiState* tui, void* state, u64 loop_count)
+  // updateAndRender should return a bool `should_quit`
+  bool (*updateAndRender)(TuiState* tui, void* state, u8* input_buffer, u64 loop_count)
 ) {
   bool should_quit = false;
   Arena permanent_arena = {0};
@@ -335,10 +335,7 @@ fn void infiniteUILoop(
     // both reads local input from the keyboard AND from the network
     osReadConsoleInput(input_buffer, 4);
 
-    // operate on input
-    should_quit = update(state, input_buffer, loop_count);
-
-    // render
+    // prep rendering
     MemoryZero(tui.frame_buffer, tui.buffer_len * sizeof(Pixel));
     tui.prev_screen_dimensions = tui.screen_dimensions;
     if (loop_count % 17 == 0) { // every 17 frames, update our terminal_dimensions
@@ -346,7 +343,8 @@ fn void infiniteUILoop(
     }
     tui.prev_cursor = tui.cursor;// save last frame's cursor
 
-    should_quit = render(&tui, state, loop_count);
+    // operate on input + render new tui.frame_buffer
+    should_quit = updateAndRender(&tui, state, input_buffer, loop_count);
 
     printfBufferAndSwap(&tui);
 
