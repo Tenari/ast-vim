@@ -1,5 +1,3 @@
-//#include "../tree-sitter/lib/include/tree_sitter/api.h"
-//#include "../tree-sitter-c/src/parser.c"
 #include "base/impl.c"
 #include "lib/tui.c"
 
@@ -29,6 +27,8 @@ typedef enum NodeType {
   NodeTypeBlock,
   NodeTypeReturn,
   NodeTypeNumericLiteral,
+  NodeTypeStatement,
+  NodeTypeExpression,
   NodeType_Count
 } NodeType;
 
@@ -61,9 +61,16 @@ struct CNode {
 };
 
 typedef struct Nodes {
-  CNode* nodes;
   u32 length;
+  u32 capacity;
+  CNode* nodes;
 } Nodes;
+
+typedef struct Views {
+  u32 length;
+  u32 capacity;
+  Nodes* nodes;
+} Views;
 
 typedef struct CTree {
   u32 capacity;
@@ -81,10 +88,11 @@ typedef struct State {
   CNode* function_node;
   u64 saved_on;
   CTree tree;
+  u32 selected_view;
+  Views* views;
 } State;
 
 ///// GLOBALS
-//const TSLanguage *tree_sitter_c(void);
 
 ///// functions
 fn Pointu32 decompose(u32 pos, u32 width) {
@@ -227,6 +235,28 @@ fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   return result;
 }
 
+fn Pointu32 renderBlockNode(TuiState* tui, u32 pos, CNode* node) {
+  assert(node->type == NodeTypeBlock);
+
+  u32 width = tui->screen_dimensions.width;
+  Pointu32 result = {.y = 1,};
+  node->render_start.x = decompose(pos, width).x;
+  node->render_start.y = decompose(pos, width).y;
+
+  tui->frame_buffer[pos+(result.x++)].bytes[0] = '{';
+  tui->frame_buffer[pos+(result.y*width)].bytes[0] = '}';
+
+  CNode* child = node->first_child;
+  if (child && child->type == NodeTypeNumericLiteral && child->numeric_literal.length <= 6) {
+    Pointu32 decomp = decompose(pos + result.x, tui->screen_dimensions.width);
+    Pointu32 used = renderNumericLiteralNode(tui, decomp.x + 1, decomp.y, child);
+    tui->frame_buffer[pos+result.x+child->numeric_literal.length+1].bytes[0] = ';';
+    result.x += used.x+1;
+  }
+
+  return result;
+}
+
 fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node) {
   Pointu32 decomp = decompose(pos, tui->screen_dimensions.width);
   Pointu32 result = {0};
@@ -242,6 +272,8 @@ fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node) {
       return renderReturnNode(tui, pos, node);
     case NodeTypeNumericLiteral:
       return renderReturnNode(tui, pos, node);
+    case NodeTypeBlock:
+      return renderBlockNode(tui, pos, node);
   }
 
   return result;
@@ -356,58 +388,5 @@ i32 main(i32 argc, ptr argv[]) {
     updateAndRender
   );
 
-  //ts_tree_delete(tree);
-  //ts_parser_delete(parser);
   return 0;
 }
-  /*
-  if (argc == 1) {
-    puts("you gotta pass the filename you're editing");
-    return -1;
-  }
-  //TSParser* parser = ts_parser_new();
-  //const TSLanguage* clang = tree_sitter_c();
-  //ts_parser_set_language(parser, clang);
-  String filename = {
-    .bytes = argv[1],
-    .capacity = strlen(argv[1])+1,
-    .length = strlen(argv[1]),
-  };
-  String file;
-  bool FILE_EXISTED = osFileExists(filename);
-  if (FILE_EXISTED) {
-    file = osFileRead(&permanent_arena, filename.bytes);
-  } else {
-    // default empty source tree
-    file.bytes = "int main() { return 0; }";
-    file.capacity = strlen(file.bytes) + 1;
-    file.length = strlen(file.bytes);
-  }
-  TSTree *tree = ts_parser_parse_string(parser, NULL, file.bytes, file.length);
-  TSNode root_node = ts_tree_root_node(tree);
-  */
-
-    /*
-    u32 prev_child_count = 0;
-    for (u32 i = 0; i < ts_node_named_child_count(root_node); i++) {
-      TSNode node = ts_node_named_child(root_node, i);
-      renderStrToBuffer(
-        tui.frame_buffer,
-        1,
-        2+i+prev_child_count,
-        ts_node_type(node),
-        tui.screen_dimensions
-      );
-      prev_child_count = ts_node_named_child_count(node);
-      for (u32 ii = 0; ii < prev_child_count; ii++) {
-        TSNode inner_node = ts_node_named_child(node, ii);
-        renderStrToBuffer(
-          tui.frame_buffer,
-          3,
-          2+i+1+ii,
-          ts_node_type(inner_node),
-          tui.screen_dimensions
-        );
-      }
-    }
-    */
