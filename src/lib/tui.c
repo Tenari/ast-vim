@@ -13,6 +13,10 @@
 #define ANSI_BLACK (16)
 #define ANSI_WHITE (15)
 #define ANSI_BROWN (130)
+#define ANSI_HIGHLIGHT_GREEN (10)
+#define ANSI_HIGHLIGHT_YELLOW (11)
+#define ANSI_HIGHLIGHT_RED (9)
+#define ANSI_GRAY (7)
 
 ///// TYPES
 typedef struct Pixel {

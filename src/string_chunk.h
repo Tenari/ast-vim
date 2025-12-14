@@ -1,8 +1,7 @@
 #ifndef STRING_CHUNK_H
 #define STRING_CHUNK_H
 
-#include "base/include.h"
-#include "lib/thread.h"
+#include "base/all.h"
 
 #define STRING_CHUNK_PAYLOAD_SIZE (64 - sizeof(StringChunk*))
 
