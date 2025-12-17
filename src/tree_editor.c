@@ -96,10 +96,17 @@ typedef struct State {
   u32 node_section;
   u32 menu_index;
   StringArena string_arena;
+  Arena permanent_arena;
+  String type_input_buffer;
 } State;
 
 ///// GLOBALS
 global str TYPES[] = {"int", "float", "char", "double", "unsigned int"};
+global const String DEFAULT_RETURN_TYPE = {
+  .bytes = "int",
+  .length = 3,
+  .capacity = 4,
+};
 
 fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node);
 
@@ -257,6 +264,10 @@ fn Pointu32 renderReturnNode(TuiState* tui, u32 pos, CNode* node) {
 
 fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   assert(node->type == NodeTypeFunction);
+  String rt = node->function.return_type;
+  if (rt.bytes == NULL) {
+    rt = DEFAULT_RETURN_TYPE;
+  }
 
   Pointu32 result = {.y = 1,};
   node->render_start.x = x;
@@ -264,8 +275,8 @@ fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   u32 pos = x + (y*tui->screen_dimensions.width);
 
   // print function's return type
-  for (u32 i = 0; i < node->function.return_type.length; i++, result.x++) {
-    tui->frame_buffer[pos+result.x].bytes[0] = node->function.return_type.bytes[i];
+  for (u32 i = 0; i < rt.length; i++, result.x++) {
+    tui->frame_buffer[pos+result.x].bytes[0] = rt.bytes[i];
     tui->frame_buffer[pos+result.x].foreground = ANSI_HIGHLIGHT_GREEN;
   }
   result.x += 1; // space
@@ -288,6 +299,9 @@ fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   // print final closing brace
   pos = x + (y*tui->screen_dimensions.width);
   tui->frame_buffer[pos+((result.y++) * tui->screen_dimensions.width)].bytes[0] = '}';
+
+  result.y++; // final trailing empty line for visual appeal
+
   return result;
 }
 
@@ -439,9 +453,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           s->selected_node->function.name.bytes[3] = 'n';
           s->selected_node->function.name.length = 4;
           s->selected_node->function.name.capacity = 64;
-          s->selected_node->function.return_type.bytes = "int";
-          s->selected_node->function.return_type.length = 3;
-          s->selected_node->function.return_type.capacity = 4;
+          s->selected_node->function.return_type.bytes = NULL;
         } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
           // TODO return type node
         }
@@ -462,8 +474,8 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
   // MAIN RENDER of CODE TREE
   //renderFunctionNode(tui, 2, 2, s->function_node);
   for (u32 i = 0; i < s->views.nodes[s->selected_view].length; i++) {
-      CNode* node = &s->views.nodes[s->selected_view].nodes[i];
-      renderNode(tui, 2 + (2*tui->screen_dimensions.width), node);
+    CNode* node = &s->views.nodes[s->selected_view].nodes[i];
+    renderNode(tui, 2 + (2*tui->screen_dimensions.width), node);
   }
   switch(s->mode) {
     case ModeInsert: {
@@ -528,6 +540,7 @@ i32 main(i32 argc, ptr argv[]) {
     .pending_command = false,
     .mode = ModeNormal,
   };
+  arenaInit(&state.permanent_arena);
   arenaInit(&state.string_arena.a);
   state.string_arena.mutex = newMutex();
   state.views.capacity = 32;
@@ -544,9 +557,6 @@ i32 main(i32 argc, ptr argv[]) {
   fn_node->function.name.bytes = "main";
   fn_node->function.name.length = 4;
   fn_node->function.name.capacity = 5;
-  fn_node->function.return_type.bytes = "int";
-  fn_node->function.return_type.length = 3;
-  fn_node->function.return_type.capacity = 4;
 
   CNode* ret_node = addNode(&state.tree, NodeTypeReturn, fn_node);
 

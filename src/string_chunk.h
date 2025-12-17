@@ -25,5 +25,8 @@ typedef struct StringArena {
 fn StringChunkList allocStringChunkList(StringArena* a, String string);
 fn void releaseStringChunkList(StringArena* a, StringChunkList* list);
 fn String stringChunkToString(Arena* a, StringChunkList list);
+fn void stringChunkListAppend(StringArena* a, StringChunkList* list, String string);
+fn void stringChunkListDeleteLast(StringArena* a, StringChunkList* list);
+fn StringChunkList stringChunkListInit(StringArena* a);
 
 #endif //STRING_CHUNK_H
