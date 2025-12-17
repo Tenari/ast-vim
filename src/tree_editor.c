@@ -40,7 +40,7 @@ typedef struct CDecl {
 } CDecl;
 
 typedef struct CFnDetails {
-  String name;
+  StringChunkList name;
   String return_type;
   CDecl args[16];
 } CFnDetails;
@@ -281,9 +281,8 @@ fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   }
   result.x += 1; // space
   // print function's name
-  for (u32 i = 0; i < node->function.name.length; i++, result.x++) {
-    tui->frame_buffer[pos+result.x].bytes[0] = node->function.name.bytes[i];
-  }
+  renderStringChunkList(tui, &node->function.name, x+result.x, y);
+  result.x += node->function.name.total_size;
   tui->frame_buffer[pos+result.x++].bytes[0] = '(';
   tui->frame_buffer[pos+result.x++].bytes[0] = ')';
   result.x += 1; // space
@@ -431,8 +430,12 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
         s->mode = ModeNormal;
       }
       if (s->node_section == 1 && isAlphaUnderscoreSpace(input_buffer[0])) {
-        s->selected_node->function.name.length = s->menu_index;
-        s->selected_node->function.name.bytes[s->menu_index++] = input_buffer[0];
+        String input_string = {
+          .bytes = (ptr)input_buffer,
+          .length = strlen((ptr)input_buffer),
+          .capacity = strlen((ptr)input_buffer)+1,
+        };
+        stringChunkListAppend(&s->string_arena, &s->selected_node->function.name, input_string);
       } else {
         if (down_arrow_pressed) {
           s->menu_index += 1;
@@ -446,13 +449,12 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           s->node_section += 1;
         } else if (input_buffer[0] == 'f' && input_buffer[1] == 0) {
           s->selected_node->type = NodeTypeFunction;
-          s->selected_node->function.name.bytes = arenaAlloc(&s->string_arena.a, 64);
-          s->selected_node->function.name.bytes[0] = 'm';
-          s->selected_node->function.name.bytes[1] = 'y';
-          s->selected_node->function.name.bytes[2] = 'F';
-          s->selected_node->function.name.bytes[3] = 'n';
-          s->selected_node->function.name.length = 4;
-          s->selected_node->function.name.capacity = 64;
+          String default_fn_name = {
+            .bytes = "myFunction",
+            .length = 10,
+            .capacity = 11,
+          };
+          s->selected_node->function.name = allocStringChunkList(&s->string_arena, default_fn_name);
           s->selected_node->function.return_type.bytes = NULL;
         } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
           // TODO return type node
@@ -514,7 +516,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           tui->cursor.x = s->selected_node->render_start.x + s->selected_node->function.return_type.length + 1;
           tui->cursor.y = s->selected_node->render_start.y;
           u32 pos = tui->cursor.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y));
-          for (u32 i = 0; i < s->selected_node->function.name.length; i++) {
+          for (u32 i = 0; i < s->selected_node->function.name.total_size; i++) {
             tui->frame_buffer[pos+i].foreground = ANSI_GRAY;
           }
         }
@@ -554,9 +556,12 @@ i32 main(i32 argc, ptr argv[]) {
   CNode* fn_node = addNode(&state.tree, NodeTypeFunction, state.tree.nodes);
   state.function_node = fn_node;
   state.selected_node = fn_node;
-  fn_node->function.name.bytes = "main";
-  fn_node->function.name.length = 4;
-  fn_node->function.name.capacity = 5;
+  String main_fn_name = {
+    .bytes = "main",
+    .length = 4,
+    .capacity = 5,
+  };
+  fn_node->function.name = allocStringChunkList(&state.string_arena, main_fn_name);
 
   CNode* ret_node = addNode(&state.tree, NodeTypeReturn, fn_node);
 

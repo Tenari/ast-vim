@@ -1,4 +1,5 @@
 #include "../base/all.h"
+#include "../string_chunk.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -37,6 +38,46 @@ typedef struct TuiState {
   Dim2 prev_screen_dimensions;
 } TuiState;
 
+typedef struct RGB {
+    u8 r;
+    u8 g;
+    u8 b;
+} RGB;
+
+///// Functions()
+fn u32 rgbToNum(RGB rgb) {
+    return ((rgb.r<<16) | (rgb.g<<8) | rgb.b);
+}
+
+fn u8 rgbToAnsi(RGB color) {
+    u8 r = color.r / (255 / 5);
+    u8 g = color.g / (255 / 5);
+    u8 b = color.b / (255 / 5);
+    return 16 + (36*r) + (6*g) + b;
+}
+
+fn RGB rgbDarken(RGB color, f32 factor) {
+  RGB result = {
+    .r = ((f32)color.r) * factor,
+    .g = ((f32)color.g) * factor,
+    .b = ((f32)color.b) * factor,
+  };
+  return result;
+}
+
+/*
+fn RGB ansiToRGB(u8 ansi) {
+  ansi -= 16;
+  u8 b = ansi % 51;
+  ansi -= ()
+  u8 g = 
+}
+*/
+
+fn bool rgbEq(RGB a, RGB b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b;
+}
+
 fn bool isPixelEq(Pixel a, Pixel b) {
   return a.background == b.background
       && a.foreground == b.foreground
@@ -66,30 +107,36 @@ fn void copyStr(u8* bytes, str cstring) {
   }
 }
 
-fn void drawAnsiBox(Pixel* buf, u16 x, u16 y, u16 width, u16 height, Dim2 screen_dimensions) {
-  u32 pos = x + (screen_dimensions.width*y);
+fn void drawAnsiBox(Pixel* buf, Box box, Dim2 sd, bool bold) {
+  str items[] =   {"┌","─","┐","│","└","┘"};
+  str b_items[] = {"┏","━","┓","┃","┗","┛"};
+  ptr* use = (ptr*)items;
+  if (bold) {
+    use = (ptr*)b_items;
+  }
+  u32 pos = XYToPos(box.x, box.y, sd.width);
 
   // print the upper box border
-  copyStr(buf[pos].bytes, "┏");
-  for (i32 i = 0; i < width; i++) {
-    copyStr(buf[pos+1+i].bytes, "━");
+  copyStr(buf[pos].bytes, use[0]);
+  for (i32 i = 0; i < box.width; i++) {
+    copyStr(buf[pos+1+i].bytes, use[1]);
   }
-  copyStr(buf[pos+1+width].bytes, "┓");
+  copyStr(buf[pos+1+box.width].bytes, use[2]);
 
   // start printing the rows
-  for (i32 i = 0; i < height; i++) {
-    pos = x + (screen_dimensions.width*(y+1+i)); // move cursor to beginning of the row
-    copyStr(buf[pos].bytes, "┃");
-    copyStr(buf[pos+1+width].bytes, "┃");
+  for (i32 i = 0; i < box.height; i++) {
+    pos = XYToPos(box.x, (box.y+1+i), sd.width); // move cursor to beginning of the row
+    copyStr(buf[pos].bytes, use[3]);
+    copyStr(buf[pos+1+box.width].bytes, use[3]);
   }
 
   // print the bottom box border
-  pos = x + (screen_dimensions.width * (y+1+height));
-  copyStr(buf[pos].bytes, "┗");
-  for (i32 i = 0; i < width; i++) {
-    copyStr(buf[pos+1+i].bytes, "━");
+  pos = XYToPos(box.x, (box.y+1+box.height), sd.width);
+  copyStr(buf[pos].bytes, use[4]);
+  for (i32 i = 0; i < box.width; i++) {
+    copyStr(buf[pos+1+i].bytes, use[1]);
   }
-  copyStr(buf[pos+1+width].bytes, "┛");
+  copyStr(buf[pos+1+box.width].bytes, use[5]);
 }
 
 fn void renderUtf8CharToBuffer(Pixel* buf, u16 x, u16 y, str text, Dim2 screen_dimensions) {
@@ -116,6 +163,17 @@ fn void renderStrToBuffer(Pixel* buf, u16 x, u16 y, str text, Dim2 screen_dimens
   u32 pos = x + (screen_dimensions.width*y);
   for (u32 i = 0; i < strlen(text); i++) {
     buf[pos+i].bytes[0] = text[i];
+  }
+}
+
+fn void renderStringChunkList(TuiState* tui, StringChunkList* list, u16 x, u16 y) {
+  u32 pos = XYToPos(x, y, tui->screen_dimensions.width);
+  StringChunk* chunk = list->first;
+  for (u32 i = 0; i < list->total_size; i++) {
+    if (i > 0 && i % STRING_CHUNK_PAYLOAD_SIZE == 0) {
+      chunk = chunk->next;
+    }
+    tui->frame_buffer[pos+i].bytes[0] = *((char*)(chunk + 1) + (i%STRING_CHUNK_PAYLOAD_SIZE));
   }
 }
 

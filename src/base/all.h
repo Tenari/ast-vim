@@ -195,7 +195,7 @@
 # define assert(c)
 #endif
 
-#define toBool(x) ((x) != 0)
+#define ToBool(x) ((x) != 0)
 
 #define KB(x) ((x) << 10)
 #define MB(x) ((x) << 20)
@@ -220,6 +220,8 @@
 
 #define DEFAULT_ALIGNMENT sizeof(void*)
 #define isPowerOfTwo(x) ((x & (x-1)) == 0)
+
+#define XYToPos(x, y, w) ((u32)(((u32)(x)) + (((u32)(y)) * (w))))
 
 #if COMPILER_MSVC
 #  define thread_static __declspec(thread)
@@ -310,6 +312,13 @@ typedef enum Utf8Character {
   Utf8CharacterFourByte,
   Utf8Character_Count,
 } Utf8Character;
+
+typedef struct Box {
+  u32 x;
+  u32 y;
+  u32 height;
+  u32 width;
+} Box;
 
 typedef struct Dim2 {
   u16 height;
@@ -512,6 +521,7 @@ fn u8 lowerAscii(u8 c);
 fn u8 upperAscii(u8 c);
 fn StringUTF16Const str16FromStr8(Arena* a, String string);
 fn bool isAlphaUnderscoreSpace(u8 c);
+fn bool isSimplePrintable(u8 c);
 
 ///// OS-wrapped apis
 void osInit();
