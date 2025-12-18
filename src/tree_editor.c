@@ -115,6 +115,12 @@ global str PRIMITIVE_TYPES[PRIMITIVE_TYPE_COUNT] = {
   "unsigned long long", "unsigned long long int",
   "long double"
 };
+global const String EMPTY_STRING = {
+  .bytes = "",
+  .length = 0,
+  .capacity = 1,
+};
+
 global const String DEFAULT_RETURN_TYPE = {
   .bytes = "int",
   .length = 3,
@@ -465,6 +471,8 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
         s->mode = ModeEdit;
         CNode* new_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
         s->selected_node = new_node;
+      } else if (input_buffer[0] == 'e' && input_buffer[1] == 0) {
+        s->mode = ModeEdit;
       } else if (input_buffer[0] == 'S' && input_buffer[1] == 0) {
         /*
         String data = {
@@ -504,7 +512,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
               .capacity = 11,
             };
             s->selected_node->function.name = allocStringChunkList(&s->string_arena, default_fn_name);
-            s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, DEFAULT_RETURN_TYPE);
+            s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, EMPTY_STRING);
           } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
             s->selected_node->type = NodeTypeReturn;
           }
@@ -555,14 +563,17 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           renderStrToBuffer(tui->frame_buffer, 8, 0, "Choose Function Return Type", tui->screen_dimensions);
           renderStrToBuffer(tui->frame_buffer, 40, 0, "Name Function", tui->screen_dimensions);
           if (s->node_section == 0) { // editing fn declaration return type section
+            tui->cursor.x = s->selected_node->render_start.x + s->selected_node->function.return_type.total_size;
+            tui->cursor.y = s->selected_node->render_start.y;
             PtrArray matching_types = listMatchingTypes(&scratch.arena, s->selected_node->function.return_type);
             u32 pos = s->selected_node->render_start.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y+1));
-            u32 goal_i = 5;
-            if (s->menu_index > 2) {
-              goal_i = Min(s->menu_index + 3, matching_types.length);
+            u32 list_size = Min(matching_types.length, 5);
+            u32 goal_i = list_size;
+            if (s->menu_index > (list_size/2)) {
+              goal_i = Min(s->menu_index + (list_size/2), matching_types.length);
             }
-            for (u32 i = goal_i - 5; i < goal_i; i++) {
-              u32 row_pos = pos+((5 - (goal_i - i))*tui->screen_dimensions.width);
+            for (u32 i = goal_i - list_size; i < goal_i; i++) {
+              u32 row_pos = pos+((list_size - (goal_i - i))*tui->screen_dimensions.width);
               for (u32 j = 0; j < 24; j++) {
                 if (s->menu_index == i) {
                   tui->frame_buffer[row_pos+j].background = 230;

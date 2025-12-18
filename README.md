@@ -15,6 +15,7 @@ I - insert sibling node above
 i - insert sibling node below
 O - insert child node at top of list
 o - insert child node at bottom of list
+e - edit current node details
 
 S - save as C source code
 
