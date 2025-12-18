@@ -7,6 +7,7 @@
 #define MAX_SCREEN_WIDTH 800
 #define GOAL_INPUT_LOOPS_PER_S 60
 #define GOAL_INPUT_LOOP_US 1000000/GOAL_INPUT_LOOPS_PER_S
+#define PRIMITIVE_TYPE_COUNT (30)
 
 ///// TYPES
 typedef struct Pointu32 {
@@ -41,7 +42,7 @@ typedef struct CDecl {
 
 typedef struct CFnDetails {
   StringChunkList name;
-  String return_type;
+  StringChunkList return_type;
   CDecl args[16];
 } CFnDetails;
 
@@ -101,7 +102,19 @@ typedef struct State {
 } State;
 
 ///// GLOBALS
-global str TYPES[] = {"int", "float", "char", "double", "unsigned int"};
+global str PRIMITIVE_TYPES[PRIMITIVE_TYPE_COUNT] = {
+  "bool", "char", "int", "float", "double", "short", "long",
+  "signed char", "unsigned char",
+  "short int", "signed short", "signed short int",
+  "unsigned short", "unsigned short int",
+  "signed", "signed int",
+  "unsigned", "unsigned int",
+  "long int", "signed long", "signed long int",
+  "unsigned long", "unsigned long int",
+  "long long", "long long int", "signed long long", "signed long long int",
+  "unsigned long long", "unsigned long long int",
+  "long double"
+};
 global const String DEFAULT_RETURN_TYPE = {
   .bytes = "int",
   .length = 3,
@@ -264,10 +277,6 @@ fn Pointu32 renderReturnNode(TuiState* tui, u32 pos, CNode* node) {
 
 fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   assert(node->type == NodeTypeFunction);
-  String rt = node->function.return_type;
-  if (rt.bytes == NULL) {
-    rt = DEFAULT_RETURN_TYPE;
-  }
 
   Pointu32 result = {.y = 1,};
   node->render_start.x = x;
@@ -275,10 +284,12 @@ fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   u32 pos = x + (y*tui->screen_dimensions.width);
 
   // print function's return type
-  for (u32 i = 0; i < rt.length; i++, result.x++) {
-    tui->frame_buffer[pos+result.x].bytes[0] = rt.bytes[i];
-    tui->frame_buffer[pos+result.x].foreground = ANSI_HIGHLIGHT_GREEN;
+  renderStringChunkList(tui, &node->function.return_type, x+result.x, y);
+  // and color it green
+  for (u32 i = 0; i < node->function.return_type.total_size; i++) {
+    tui->frame_buffer[pos+result.x+i].foreground = ANSI_HIGHLIGHT_GREEN;
   }
+  result.x += node->function.return_type.total_size;
   result.x += 1; // space
   // print function's name
   renderStringChunkList(tui, &node->function.name, x+result.x, y);
@@ -377,21 +388,24 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
   bool right_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 67;
   bool down_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 66;
   bool up_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 65;
+  bool tab_pressed = input_buffer[0] == ASCII_TAB;
+  bool enter_pressed = input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED;
+  bool backspace_pressed = input_buffer[0] == ASCII_BACKSPACE || input_buffer[0] == ASCII_DEL;
   switch (s->mode) {
     case ModeNormal: {
       if (input_buffer[0] == 'q' && input_buffer[1] == 0) {
         s->should_quit = true;
-      } else if (left_arrow_pressed) {
+      } else if (left_arrow_pressed || input_buffer[0] == 'h') {
         s->selected_node = s->selected_node->parent;
-      } else if (right_arrow_pressed) {
+      } else if (right_arrow_pressed || input_buffer[0] == 'l') {
         if (s->selected_node->first_child != NULL) {
           s->selected_node = s->selected_node->first_child;
         }
-      } else if (down_arrow_pressed) {
+      } else if (down_arrow_pressed || input_buffer[0] == 'j') {
         if (s->selected_node->next_sibling != NULL) {
           s->selected_node = s->selected_node->next_sibling;
         }
-      } else if (up_arrow_pressed) {
+      } else if (up_arrow_pressed || input_buffer[0] == 'k') {
         if (s->selected_node->prev_sibling != NULL) {
           s->selected_node = s->selected_node->prev_sibling;
         }
@@ -429,22 +443,32 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
       if (input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0) {
         s->mode = ModeNormal;
       }
-      if (s->node_section == 1 && isAlphaUnderscoreSpace(input_buffer[0])) {
-        String input_string = {
-          .bytes = (ptr)input_buffer,
-          .length = strlen((ptr)input_buffer),
-          .capacity = strlen((ptr)input_buffer)+1,
-        };
-        stringChunkListAppend(&s->string_arena, &s->selected_node->function.name, input_string);
+      if (s->node_section == 1) {
+        if (backspace_pressed) {
+          stringChunkListDeleteLast(&s->string_arena, &s->selected_node->function.name);
+        } else if (enter_pressed) {
+          s->mode = ModeNormal;
+        } else if (isSimplePrintable(input_buffer[0])) {
+          String input_string = {
+            .bytes = (ptr)input_buffer,
+            .length = strlen((ptr)input_buffer),
+            .capacity = strlen((ptr)input_buffer)+1,
+          };
+          stringChunkListAppend(&s->string_arena, &s->selected_node->function.name, input_string);
+        }
       } else {
         if (down_arrow_pressed) {
           s->menu_index += 1;
         } else if (up_arrow_pressed) {
           s->menu_index -= 1;
-        } else if (input_buffer[0] == ASCII_TAB) {
-          s->selected_node->function.return_type.bytes = (ptr)TYPES[s->menu_index];
-          s->selected_node->function.return_type.length = strlen(TYPES[s->menu_index]);
-          s->selected_node->function.return_type.capacity = s->selected_node->function.return_type.length + 1;
+        } else if (tab_pressed || enter_pressed) {
+          releaseStringChunkList(&s->string_arena, &s->selected_node->function.return_type);
+          String temp = {
+            .bytes = (ptr)PRIMITIVE_TYPES[s->menu_index],
+            .length = strlen(PRIMITIVE_TYPES[s->menu_index]),
+            .capacity = strlen(PRIMITIVE_TYPES[s->menu_index]) + 1,
+          };
+          s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, temp);
           s->menu_index = 0;
           s->node_section += 1;
         } else if (input_buffer[0] == 'f' && input_buffer[1] == 0) {
@@ -455,7 +479,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
             .capacity = 11,
           };
           s->selected_node->function.name = allocStringChunkList(&s->string_arena, default_fn_name);
-          s->selected_node->function.return_type.bytes = NULL;
+          s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, DEFAULT_RETURN_TYPE);
         } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
           // TODO return type node
         }
@@ -495,9 +519,13 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
 
         if (s->node_section == 0) {
           u32 pos = s->selected_node->render_start.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y+1));
-          for (u32 i = 0; i < 5; i++) {
-            u32 row_pos = pos+(i*tui->screen_dimensions.width);
-            for (u32 j = 0; j < 16; j++) {
+          u32 goal_i = 5;
+          if (s->menu_index > 2) {
+            goal_i = Min(s->menu_index + 3, PRIMITIVE_TYPE_COUNT);
+          }
+          for (u32 i = goal_i - 5; i < goal_i; i++) {
+            u32 row_pos = pos+((5 - (goal_i - i))*tui->screen_dimensions.width);
+            for (u32 j = 0; j < 24; j++) {
               if (s->menu_index == i) {
                 tui->frame_buffer[row_pos+j].background = 230;
                 tui->frame_buffer[row_pos+j].foreground = 33;
@@ -505,15 +533,15 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
                 tui->frame_buffer[row_pos+j].background = 33;
                 tui->frame_buffer[row_pos+j].foreground = 230;
               }
-              if (j < strlen(TYPES[i])) {
-                tui->frame_buffer[row_pos+j].bytes[0] = TYPES[i][j];
+              if (j < strlen(PRIMITIVE_TYPES[i])) {
+                tui->frame_buffer[row_pos+j].bytes[0] = PRIMITIVE_TYPES[i][j];
               } else {
                 tui->frame_buffer[row_pos+j].bytes[0] = ' ';
               }
             }
           }
         } else {
-          tui->cursor.x = s->selected_node->render_start.x + s->selected_node->function.return_type.length + 1;
+          tui->cursor.x = s->selected_node->render_start.x + s->selected_node->function.return_type.total_size + 1 + s->selected_node->function.name.total_size;
           tui->cursor.y = s->selected_node->render_start.y;
           u32 pos = tui->cursor.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y));
           for (u32 i = 0; i < s->selected_node->function.name.total_size; i++) {
@@ -562,6 +590,7 @@ i32 main(i32 argc, ptr argv[]) {
     .capacity = 5,
   };
   fn_node->function.name = allocStringChunkList(&state.string_arena, main_fn_name);
+  fn_node->function.return_type = allocStringChunkList(&state.string_arena, DEFAULT_RETURN_TYPE);
 
   CNode* ret_node = addNode(&state.tree, NodeTypeReturn, fn_node);
 

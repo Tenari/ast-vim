@@ -79,6 +79,10 @@ fn bool isAlphaUnderscoreSpace(u8 c) {
         || c == '_');
 }
 
+fn bool isSimplePrintable(u8 c) {
+  return (c >= ' ' && c <= '~');
+}
+
 typedef struct StrDecode {
 	u32 codepoint;
 	u32 size;
