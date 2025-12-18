@@ -281,22 +281,28 @@ typedef u32 b32;
 
 // Structs
 typedef struct Arena {
-    u8* memory;
-    u64 max;
-    u64 alloc_position;
-    u64 commit_position;
-    b8 static_size;
+  u8* memory;
+  u64 max;
+  u64 alloc_position;
+  u64 commit_position;
+  b8 static_size;
 } Arena;
 
+typedef struct PtrArray {
+  u32 length;
+  u32 capacity;
+  ptr* items;
+} PtrArray;
+
 typedef struct u8List {
-  u64 length;
-  u64 capacity;
+  u32 length;
+  u32 capacity;
   u8* items;
 } u8List;
 
 typedef struct String {
-  u64 length;
-  u64 capacity;
+  u32 length;
+  u32 capacity;
   ptr bytes;
 } String;
 

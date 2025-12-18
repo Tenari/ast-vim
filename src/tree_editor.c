@@ -17,10 +17,10 @@ typedef struct Pointu32 {
 
 typedef enum Mode {
   ModeNormal,
-  ModeInsert,
+  ModeEdit,
   Mode_Count
 } Mode;
-str MODE_STRINGS[Mode_Count] = {"Normal", "Insert"};
+str MODE_STRINGS[Mode_Count] = {"Normal", "Edit"};
 
 typedef enum NodeType {
   NodeTypeInvalid,
@@ -382,8 +382,53 @@ fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node) {
   return result;
 }
 
+fn PtrArray listMatchingTypes(Arena* a, StringChunkList list) {
+  String type_name = stringChunkToString(a, list);
+  u32 matching_count = 0;
+  for (u32 i = 0; i < PRIMITIVE_TYPE_COUNT; i++) {
+    if (strstr(PRIMITIVE_TYPES[i], type_name.bytes) != NULL) {
+      matching_count += 1;
+    }
+  }
+  PtrArray result = {
+    .length = matching_count,
+    .capacity = matching_count,
+    .items = arenaAllocArray(a, ptr, matching_count),
+  };
+  u32 result_index = 0;
+  for (u32 i = 0; i < PRIMITIVE_TYPE_COUNT; i++) {
+    if (strstr(PRIMITIVE_TYPES[i], type_name.bytes) != NULL) {
+      result.items[result_index] = (ptr)PRIMITIVE_TYPES[i];
+      result_index += 1;
+    }
+  }
+  arenaDealloc(a, type_name.capacity);
+  return result;
+}
+
 fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_count) {
   State* s = (State*)state;
+  ScratchMem scratch = scratchGet();
+
+  // "always" rendering logic
+  // indicate if we saved
+  if (s->saved_on && (loop_count - s->saved_on < 100)) {
+    renderStrToBuffer(tui->frame_buffer, 1, 0, "saved", tui->screen_dimensions);
+  }
+  // indicate what mode we are in
+  renderStrToBuffer(tui->frame_buffer, 0, 0, MODE_STRINGS[s->mode], tui->screen_dimensions);
+  // MAIN RENDER of CODE TREE
+  for (u32 i = 0; i < s->views.nodes[s->selected_view].length; i++) {
+    CNode* node = &s->views.nodes[s->selected_view].nodes[i];
+    renderNode(tui, 2 + (2*tui->screen_dimensions.width), node);
+  }
+
+  // input/mode-dependent rendering logic
+  String input_string = {
+    .bytes = (ptr)input_buffer,
+    .length = strlen((ptr)input_buffer),
+    .capacity = strlen((ptr)input_buffer)+1,
+  };
   bool left_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 68;
   bool right_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 67;
   bool down_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 66;
@@ -393,6 +438,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
   bool backspace_pressed = input_buffer[0] == ASCII_BACKSPACE || input_buffer[0] == ASCII_DEL;
   switch (s->mode) {
     case ModeNormal: {
+      // input handling
       if (input_buffer[0] == 'q' && input_buffer[1] == 0) {
         s->should_quit = true;
       } else if (left_arrow_pressed || input_buffer[0] == 'h') {
@@ -411,12 +457,12 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
         }
       } else if (input_buffer[0] == 'I' && input_buffer[1] == 0) {
         // insert sibling ABOVE
-        s->mode = ModeInsert;
+        s->mode = ModeEdit;
         CNode* new_node = addNodeBeforeSibling(&s->tree, NodeTypeIncomplete, s->selected_node->parent, s->selected_node);
         s->selected_node = new_node;
       } else if (input_buffer[0] == 'i' && input_buffer[1] == 0) {
         // insert sibling BELOW
-        s->mode = ModeInsert;
+        s->mode = ModeEdit;
         CNode* new_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
         s->selected_node = new_node;
       } else if (input_buffer[0] == 'S' && input_buffer[1] == 0) {
@@ -438,51 +484,120 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
         saved_on = loop_count;
         */
       }
+
+      // rendering logic
+      tui->cursor.x = s->selected_node->render_start.x;
+      tui->cursor.y = s->selected_node->render_start.y;
     } break;
-    case ModeInsert: {
+    case ModeEdit: {
       if (input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0) {
         s->mode = ModeNormal;
       }
-      if (s->node_section == 1) {
-        if (backspace_pressed) {
-          stringChunkListDeleteLast(&s->string_arena, &s->selected_node->function.name);
-        } else if (enter_pressed) {
-          s->mode = ModeNormal;
-        } else if (isSimplePrintable(input_buffer[0])) {
-          String input_string = {
-            .bytes = (ptr)input_buffer,
-            .length = strlen((ptr)input_buffer),
-            .capacity = strlen((ptr)input_buffer)+1,
-          };
-          stringChunkListAppend(&s->string_arena, &s->selected_node->function.name, input_string);
-        }
-      } else {
-        if (down_arrow_pressed) {
-          s->menu_index += 1;
-        } else if (up_arrow_pressed) {
-          s->menu_index -= 1;
-        } else if (tab_pressed || enter_pressed) {
-          releaseStringChunkList(&s->string_arena, &s->selected_node->function.return_type);
-          String temp = {
-            .bytes = (ptr)PRIMITIVE_TYPES[s->menu_index],
-            .length = strlen(PRIMITIVE_TYPES[s->menu_index]),
-            .capacity = strlen(PRIMITIVE_TYPES[s->menu_index]) + 1,
-          };
-          s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, temp);
-          s->menu_index = 0;
-          s->node_section += 1;
-        } else if (input_buffer[0] == 'f' && input_buffer[1] == 0) {
-          s->selected_node->type = NodeTypeFunction;
-          String default_fn_name = {
-            .bytes = "myFunction",
-            .length = 10,
-            .capacity = 11,
-          };
-          s->selected_node->function.name = allocStringChunkList(&s->string_arena, default_fn_name);
-          s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, DEFAULT_RETURN_TYPE);
-        } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
-          // TODO return type node
-        }
+      switch (s->selected_node->type) {
+        case NodeTypeIncomplete: {
+          // handle input
+          if (input_buffer[0] == 'f' && input_buffer[1] == 0) {
+            s->selected_node->type = NodeTypeFunction;
+            String default_fn_name = {
+              .bytes = "myFunction",
+              .length = 10,
+              .capacity = 11,
+            };
+            s->selected_node->function.name = allocStringChunkList(&s->string_arena, default_fn_name);
+            s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, DEFAULT_RETURN_TYPE);
+          } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
+            s->selected_node->type = NodeTypeReturn;
+          }
+
+          // render
+          tui->frame_buffer[8].foreground = ANSI_HP_RED;
+          tui->frame_buffer[8].bytes[0] = 'f';
+          renderStrToBuffer(tui->frame_buffer, 9, 0, ": function", tui->screen_dimensions);
+          tui->frame_buffer[19].foreground = ANSI_HP_RED;
+          tui->frame_buffer[19].bytes[0] = 'r';
+          renderStrToBuffer(tui->frame_buffer, 20, 0, ": return", tui->screen_dimensions);
+        } break;
+        case NodeTypeFunction: {
+          // handle input
+          if (s->node_section == 0) { // editing fn declaration return type section
+            if (down_arrow_pressed) {
+              s->menu_index += 1;
+            } else if (up_arrow_pressed) {
+              s->menu_index -= 1;
+            } else if (tab_pressed || enter_pressed) {
+              PtrArray matching_types = listMatchingTypes(&scratch.arena, s->selected_node->function.return_type);
+              //printf("%d", matching_types.length);
+              releaseStringChunkList(&s->string_arena, &s->selected_node->function.return_type);
+              String temp = {
+                .bytes = matching_types.items[s->menu_index],
+                .length = strlen(matching_types.items[s->menu_index]),
+                .capacity = strlen(matching_types.items[s->menu_index]) + 1,
+              };
+              s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, temp);
+              s->menu_index = 0;
+              s->node_section += 1;
+            } else if (isAlphaUnderscoreSpace(input_buffer[0])) {
+              stringChunkListAppend(&s->string_arena, &s->selected_node->function.return_type, input_string);
+            } else if (backspace_pressed) {
+              stringChunkListDeleteLast(&s->string_arena, &s->selected_node->function.return_type);
+            }
+          } else if (s->node_section == 1) { // editing fn declaration identifier/name section
+            if (backspace_pressed) {
+              stringChunkListDeleteLast(&s->string_arena, &s->selected_node->function.name);
+            } else if (enter_pressed) {
+              s->mode = ModeNormal;
+            } else if (isSimplePrintable(input_buffer[0])) {
+              stringChunkListAppend(&s->string_arena, &s->selected_node->function.name, input_string);
+            }
+          }
+
+          // render
+          renderStrToBuffer(tui->frame_buffer, 8, 0, "Choose Function Return Type", tui->screen_dimensions);
+          renderStrToBuffer(tui->frame_buffer, 40, 0, "Name Function", tui->screen_dimensions);
+          if (s->node_section == 0) { // editing fn declaration return type section
+            PtrArray matching_types = listMatchingTypes(&scratch.arena, s->selected_node->function.return_type);
+            u32 pos = s->selected_node->render_start.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y+1));
+            u32 goal_i = 5;
+            if (s->menu_index > 2) {
+              goal_i = Min(s->menu_index + 3, matching_types.length);
+            }
+            for (u32 i = goal_i - 5; i < goal_i; i++) {
+              u32 row_pos = pos+((5 - (goal_i - i))*tui->screen_dimensions.width);
+              for (u32 j = 0; j < 24; j++) {
+                if (s->menu_index == i) {
+                  tui->frame_buffer[row_pos+j].background = 230;
+                  tui->frame_buffer[row_pos+j].foreground = 33;
+                } else {
+                  tui->frame_buffer[row_pos+j].background = 33;
+                  tui->frame_buffer[row_pos+j].foreground = 230;
+                }
+                if (j < strlen(matching_types.items[i])) {
+                  tui->frame_buffer[row_pos+j].bytes[0] = matching_types.items[i][j];
+                } else {
+                  tui->frame_buffer[row_pos+j].bytes[0] = ' ';
+                }
+              }
+            }
+          } else if (s->node_section == 1) { // editing fn declaration identifier/name section
+            tui->cursor.x = s->selected_node->render_start.x + s->selected_node->function.return_type.total_size + 1 + s->selected_node->function.name.total_size;
+            tui->cursor.y = s->selected_node->render_start.y;
+            u32 pos = tui->cursor.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y));
+            for (u32 i = 0; i < s->selected_node->function.name.total_size; i++) {
+              tui->frame_buffer[pos+i].foreground = ANSI_GRAY;
+            }
+          }
+        } break;
+        case NodeTypeRoot: {
+          // TODO message that you can't edit the root node
+        } break;
+        case NodeTypeStatement:
+        case NodeTypeExpression:
+        case NodeTypeInvalid:
+        case NodeTypeReturn:
+        case NodeTypeNumericLiteral:
+        case NodeTypeBlock:
+        case NodeType_Count:
+          break;
       }
     } break;
     case Mode_Count: {
@@ -491,72 +606,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
     } break;
   }
 
-  // indicate if we saved
-  if (s->saved_on && (loop_count - s->saved_on < 100)) {
-    renderStrToBuffer(tui->frame_buffer, 1, 0, "saved", tui->screen_dimensions);
-  }
-  // indicate what mode we are in
-  renderStrToBuffer(tui->frame_buffer, 0, 0, MODE_STRINGS[s->mode], tui->screen_dimensions);
-  // MAIN RENDER of CODE TREE
-  //renderFunctionNode(tui, 2, 2, s->function_node);
-  for (u32 i = 0; i < s->views.nodes[s->selected_view].length; i++) {
-    CNode* node = &s->views.nodes[s->selected_view].nodes[i];
-    renderNode(tui, 2 + (2*tui->screen_dimensions.width), node);
-  }
-  switch(s->mode) {
-    case ModeInsert: {
-      if (s->selected_node->type == NodeTypeIncomplete) {
-        tui->frame_buffer[8].foreground = ANSI_HP_RED;
-        tui->frame_buffer[8].bytes[0] = 'f';
-        renderStrToBuffer(tui->frame_buffer, 9, 0, ": function", tui->screen_dimensions);
-
-        tui->frame_buffer[19].foreground = ANSI_HP_RED;
-        tui->frame_buffer[19].bytes[0] = 'r';
-        renderStrToBuffer(tui->frame_buffer, 20, 0, ": return", tui->screen_dimensions);
-      } else if (s->selected_node->type == NodeTypeFunction) {
-        renderStrToBuffer(tui->frame_buffer, 8, 0, "Choose Function Return Type", tui->screen_dimensions);
-        renderStrToBuffer(tui->frame_buffer, 40, 0, "Name Function", tui->screen_dimensions);
-
-        if (s->node_section == 0) {
-          u32 pos = s->selected_node->render_start.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y+1));
-          u32 goal_i = 5;
-          if (s->menu_index > 2) {
-            goal_i = Min(s->menu_index + 3, PRIMITIVE_TYPE_COUNT);
-          }
-          for (u32 i = goal_i - 5; i < goal_i; i++) {
-            u32 row_pos = pos+((5 - (goal_i - i))*tui->screen_dimensions.width);
-            for (u32 j = 0; j < 24; j++) {
-              if (s->menu_index == i) {
-                tui->frame_buffer[row_pos+j].background = 230;
-                tui->frame_buffer[row_pos+j].foreground = 33;
-              } else {
-                tui->frame_buffer[row_pos+j].background = 33;
-                tui->frame_buffer[row_pos+j].foreground = 230;
-              }
-              if (j < strlen(PRIMITIVE_TYPES[i])) {
-                tui->frame_buffer[row_pos+j].bytes[0] = PRIMITIVE_TYPES[i][j];
-              } else {
-                tui->frame_buffer[row_pos+j].bytes[0] = ' ';
-              }
-            }
-          }
-        } else {
-          tui->cursor.x = s->selected_node->render_start.x + s->selected_node->function.return_type.total_size + 1 + s->selected_node->function.name.total_size;
-          tui->cursor.y = s->selected_node->render_start.y;
-          u32 pos = tui->cursor.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y));
-          for (u32 i = 0; i < s->selected_node->function.name.total_size; i++) {
-            tui->frame_buffer[pos+i].foreground = ANSI_GRAY;
-          }
-        }
-      }
-    } break;
-    case ModeNormal: {
-      tui->cursor.x = s->selected_node->render_start.x;
-      tui->cursor.y = s->selected_node->render_start.y;
-    } break;
-    case Mode_Count: {} break;
-  }
-
+  scratchReturn(&scratch);
   return s->should_quit;
 }
 
