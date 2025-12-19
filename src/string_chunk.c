@@ -149,3 +149,14 @@ fn StringChunkList stringChunkListInit(StringArena* a) {
   return result;
 }
 
+fn void stringChunkCopyToBuffer(StringChunkList* list, u8* buffer, u32 len) {
+  assert(list->total_size <= len);
+
+  StringChunk* chunk = list->first;
+  for (u32 i = 0; i < list->total_size; i++) {
+    if (i > 0 && i % STRING_CHUNK_PAYLOAD_SIZE == 0) {
+      chunk = chunk->next;
+    }
+    buffer[i] = *((char*)(chunk + 1) + (i%STRING_CHUNK_PAYLOAD_SIZE));
+  }
+}

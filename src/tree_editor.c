@@ -36,11 +36,12 @@ typedef enum NodeType {
 } NodeType;
 
 typedef struct CDecl {
-  String type;
-  String name;
+  StringChunkList type;
+  StringChunkList name;
 } CDecl;
 
 typedef struct CFnDetails {
+  u8 arg_count;
   StringChunkList name;
   StringChunkList return_type;
   CDecl args[16];
@@ -125,6 +126,12 @@ global const String DEFAULT_RETURN_TYPE = {
   .bytes = "int",
   .length = 3,
   .capacity = 4,
+};
+
+global const String DEFAULT_FUNCTION_NAME = {
+  .bytes = "myFunction",
+  .length = 10,
+  .capacity = 11,
 };
 
 fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node);
@@ -290,16 +297,32 @@ fn Pointu32 renderFunctionNode(TuiState* tui, u16 x, u16 y, CNode* node) {
   u32 pos = x + (y*tui->screen_dimensions.width);
 
   // print function's return type
-  renderStringChunkList(tui, &node->function.return_type, x+result.x, y);
-  // and color it green
-  for (u32 i = 0; i < node->function.return_type.total_size; i++) {
-    tui->frame_buffer[pos+result.x+i].foreground = ANSI_HIGHLIGHT_GREEN;
+  if (node->function.return_type.total_size > 0) {
+    renderStringChunkList(tui, &node->function.return_type, x+result.x, y);
+    // and color it green
+    for (u32 i = 0; i < node->function.return_type.total_size; i++) {
+      tui->frame_buffer[pos+result.x+i].foreground = ANSI_HIGHLIGHT_GREEN;
+    }
+    result.x += node->function.return_type.total_size;
+  } else {
+    for (u32 i = 0; i < DEFAULT_RETURN_TYPE.length; i++) {
+      tui->frame_buffer[pos+result.x+i].foreground = ANSI_DULL_GREEN;
+      tui->frame_buffer[pos+result.x+i].bytes[0] = DEFAULT_RETURN_TYPE.bytes[i];
+    }
+    result.x += DEFAULT_RETURN_TYPE.length;
   }
-  result.x += node->function.return_type.total_size;
   result.x += 1; // space
   // print function's name
-  renderStringChunkList(tui, &node->function.name, x+result.x, y);
-  result.x += node->function.name.total_size;
+  if (node->function.name.total_size > 0) {
+    renderStringChunkList(tui, &node->function.name, x+result.x, y);
+    result.x += node->function.name.total_size;
+  } else {
+    for (u32 i = 0; i < DEFAULT_FUNCTION_NAME.length; i++) {
+      tui->frame_buffer[pos+result.x+i].foreground = ANSI_DULL_GRAY;
+      tui->frame_buffer[pos+result.x+i].bytes[0] = DEFAULT_FUNCTION_NAME.bytes[i];
+    }
+    result.x += DEFAULT_FUNCTION_NAME.length;
+  }
   tui->frame_buffer[pos+result.x++].bytes[0] = '(';
   tui->frame_buffer[pos+result.x++].bytes[0] = ')';
   result.x += 1; // space
@@ -373,8 +396,8 @@ fn Pointu32 renderNode(TuiState* tui, u32 pos, CNode* node) {
     case NodeTypeIncomplete: {
       //if () {
       //}
-      // TODO render this with foreground ANSI_GRAY if the node is the currently selected node AND we are in insert mode
-      //tui->frame_buffer[pos].foreground = ANSI_GRAY;
+      // TODO render this with foreground ANSI_DULL_GRAY if the node is the currently selected node AND we are in insert mode
+      //tui->frame_buffer[pos].foreground = ANSI_DULL_GRAY;
       tui->frame_buffer[pos].bytes[0] = '_';
       tui->frame_buffer[pos+1].bytes[0] = '_';
       tui->frame_buffer[pos+2].bytes[0] = '_';
@@ -428,6 +451,8 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
     CNode* node = &s->views.nodes[s->selected_view].nodes[i];
     renderNode(tui, 2 + (2*tui->screen_dimensions.width), node);
   }
+  tui->cursor.x = s->selected_node->render_start.x;
+  tui->cursor.y = s->selected_node->render_start.y;
 
   // input/mode-dependent rendering logic
   String input_string = {
@@ -492,10 +517,6 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
         saved_on = loop_count;
         */
       }
-
-      // rendering logic
-      tui->cursor.x = s->selected_node->render_start.x;
-      tui->cursor.y = s->selected_node->render_start.y;
     } break;
     case ModeEdit: {
       if (input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0) {
@@ -506,12 +527,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           // handle input
           if (input_buffer[0] == 'f' && input_buffer[1] == 0) {
             s->selected_node->type = NodeTypeFunction;
-            String default_fn_name = {
-              .bytes = "myFunction",
-              .length = 10,
-              .capacity = 11,
-            };
-            s->selected_node->function.name = allocStringChunkList(&s->string_arena, default_fn_name);
+            s->selected_node->function.name = allocStringChunkList(&s->string_arena, EMPTY_STRING);
             s->selected_node->function.return_type = allocStringChunkList(&s->string_arena, EMPTY_STRING);
           } else if (input_buffer[0] == 'r' && input_buffer[1] == 0) {
             s->selected_node->type = NodeTypeReturn;
@@ -552,11 +568,13 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           } else if (s->node_section == 1) { // editing fn declaration identifier/name section
             if (backspace_pressed) {
               stringChunkListDeleteLast(&s->string_arena, &s->selected_node->function.name);
-            } else if (enter_pressed) {
-              s->mode = ModeNormal;
+            } else if (enter_pressed || tab_pressed) {
+              s->selected_node->function.arg_count += 1;
+              s->node_section += 1;
             } else if (isSimplePrintable(input_buffer[0])) {
               stringChunkListAppend(&s->string_arena, &s->selected_node->function.name, input_string);
             }
+          } else { // editing fn decl args list
           }
 
           // render
@@ -594,7 +612,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
             tui->cursor.y = s->selected_node->render_start.y;
             u32 pos = tui->cursor.x + (tui->screen_dimensions.width * (s->selected_node->render_start.y));
             for (u32 i = 0; i < s->selected_node->function.name.total_size; i++) {
-              tui->frame_buffer[pos+i].foreground = ANSI_GRAY;
+              tui->frame_buffer[pos+i].foreground = ANSI_DULL_GRAY;
             }
           }
         } break;

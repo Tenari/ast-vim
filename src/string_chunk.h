@@ -28,5 +28,6 @@ fn String stringChunkToString(Arena* a, StringChunkList list);
 fn void stringChunkListAppend(StringArena* a, StringChunkList* list, String string);
 fn void stringChunkListDeleteLast(StringArena* a, StringChunkList* list);
 fn StringChunkList stringChunkListInit(StringArena* a);
+fn void stringChunkCopyToBuffer(StringChunkList* list, u8* buffer, u32 len);
 
 #endif //STRING_CHUNK_H
