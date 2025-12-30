@@ -53,6 +53,7 @@ fn String stringChunkToString(Arena* a, StringChunkList list) {
     }
     result.bytes[i] = *((char*)(chunk + 1) + (i%STRING_CHUNK_PAYLOAD_SIZE));
   }
+  result.bytes[result.length] = 0; // null terminate the string for compat
   return result;
 }
 

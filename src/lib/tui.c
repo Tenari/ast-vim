@@ -50,6 +50,18 @@ typedef struct RGB {
     u8 b;
 } RGB;
 
+typedef struct CommandPaletteCommand {
+  u32 id;
+  ptr display_name;
+  ptr description;
+  ptr* tags;
+} CommandPaletteCommand;
+
+typedef struct CommandPaletteCommandList {
+  u32 length;
+  CommandPaletteCommand* items;
+} CommandPaletteCommandList;
+
 ///// Functions()
 fn u32 rgbToNum(RGB rgb) {
     return ((rgb.r<<16) | (rgb.g<<8) | rgb.b);
@@ -342,6 +354,80 @@ fn void printfBufferAndSwap(TuiState* tui) {
 
   // reset the `redraw` flag
   tui->redraw = false;
+}
+
+fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPaletteCommandList commands) {
+  // returns the cursor position as Pos2
+
+  u32 MAX_COMMAND_PALETTE_COMMANDS = 1000;
+  ScratchMem scratch = scratchGet();
+  Dim2 sd = tui->screen_dimensions;
+  Pos2 result = { 0 };
+
+  // draw the outline
+  Box outline = {
+    .width = sd.width / 2,
+    .height = sd.height / 2,
+  };
+  outline.x = outline.width / 2;
+  outline.y = outline.height / 2;
+  drawAnsiBox(tui->frame_buffer, outline, sd, true);
+
+  // draw the "search bar"
+  result.x = outline.x + 1 + current_search.length;
+  result.y = outline.y + 1;
+  renderStrToBufferMaxWidth(tui->frame_buffer, outline.x+1, outline.y+1, current_search.bytes, outline.width - 2, sd);
+  for (u32 i = 1; i < outline.width-1; i++) {
+    u32 pos = XYToPos(outline.x+1, outline.y+2, sd.width);
+    copyStr(tui->frame_buffer[pos].bytes, "━");
+  }
+
+  // sort the command options
+  u32* scores = arenaAllocArray(&scratch.arena, u32, commands.length);
+  for (u32 i = 0; i < commands.length; i++) {
+    CommandPaletteCommand* cmd = &commands.items[i];
+    bool name_matches = false;
+    for (u32 j = 0; j < strlen(cmd->display_name); j++) {
+      if (current_search.length > 0 && cmd->display_name[j] == current_search.bytes[0]) {
+        for (u32 k = 0; k < current_search.length && k+j < strlen(cmd->display_name); k++) {
+          if (current_search.bytes[k] != cmd->display_name[j+k]) {
+            break;
+          }
+          if (k == current_search.length - 1) {
+            name_matches = true;
+          }
+        }
+      }
+    }
+    bool description_matches = false;
+    u32 tag_match_count = 0;
+    scores[i] = (name_matches * 100 * MAX_COMMAND_PALETTE_COMMANDS) +
+                (tag_match_count * 10 * MAX_COMMAND_PALETTE_COMMANDS) +
+                (description_matches * MAX_COMMAND_PALETTE_COMMANDS) +
+                cmd->id;
+  }
+  u32Quicksort(scores, 0, commands.length - 1);
+  u32ReverseArray(scores, commands.length);
+  // draw the command options
+  u32 x = outline.x + 1;
+  u32 y = outline.y + 3;
+  for (u32 i = 0; (y-outline.y) < (outline.height-1) && i < commands.length; i++) {
+    u32 id = scores[i] % MAX_COMMAND_PALETTE_COMMANDS;
+    CommandPaletteCommand* cmd = NULL;
+    for (u32 j = 0; j < commands.length; j++) {
+      if (commands.items[j].id == id) {
+        cmd = &commands.items[j];
+        break;
+      }
+    }
+    assert(cmd != NULL);
+    renderStrToBufferMaxWidth(tui->frame_buffer, x, y, cmd->display_name, outline.width - 2, sd);
+    renderStrToBufferMaxWidth(tui->frame_buffer, x, y+1, cmd->description, outline.width - 2, sd);
+    y += 2;
+  }
+
+  scratchReturn(&scratch);
+  return result;
 }
 
 fn void renderChoiceMenu(TuiState* tui, u16 x, u16 y, ptr options[], u32 len, bool choosable, u32 selected_index, u8* colors) {

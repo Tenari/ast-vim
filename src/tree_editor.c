@@ -8,6 +8,7 @@
 #define GOAL_INPUT_LOOPS_PER_S 60
 #define GOAL_INPUT_LOOP_US 1000000/GOAL_INPUT_LOOPS_PER_S
 #define PRIMITIVE_TYPE_COUNT (30)
+#define COMMAND_LEN (3)
 
 ///// TYPES
 typedef struct Pointu32 {
@@ -88,6 +89,7 @@ typedef struct CTree {
 typedef struct State {
   bool should_quit;
   bool pending_command;
+  bool show_command_palette;
   Mode mode;
   CNode* selected_node;
   CNode* function_node;
@@ -99,10 +101,26 @@ typedef struct State {
   u32 menu_index;
   StringArena string_arena;
   Arena permanent_arena;
-  String type_input_buffer;
+  CommandPaletteCommandList commands;
+  StringChunkList cmd_palette_search_input;
 } State;
 
 ///// GLOBALS
+global const CommandPaletteCommand COMMANDS[COMMAND_LEN] = {
+  { .id = 0, .display_name = "Insert Sibling Node Before (I)",
+    .description = "Insert a new node on the same conceptual 'level' of the tree.",
+    .tags = {"new node", "insert", "sibling", "add node", "add item", "add element", "new item", "new element"},
+  },
+  { .id = 1, .display_name = "Insert Sibling Node After (i)",
+    .description = "Insert a new node on the same conceptual 'level' of the tree.",
+    .tags = {"new node", "insert", "sibling", "add node", "add item", "add element", "new item", "new element"},
+  },
+  { .id = 2, .display_name = "Quit (q)",
+    .description = "Quit the application.",
+    .tags = {"quit", "exit", "close"},
+  },
+};
+
 global str PRIMITIVE_TYPES[PRIMITIVE_TYPE_COUNT] = {
   "bool", "char", "int", "float", "double", "short", "long",
   "signed char", "unsigned char",
@@ -464,58 +482,75 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
   bool right_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 67;
   bool down_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 66;
   bool up_arrow_pressed = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 65;
+  bool esc_pressed = input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0;
   bool tab_pressed = input_buffer[0] == ASCII_TAB;
   bool enter_pressed = input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED;
   bool backspace_pressed = input_buffer[0] == ASCII_BACKSPACE || input_buffer[0] == ASCII_DEL;
   switch (s->mode) {
     case ModeNormal: {
-      // input handling
-      if (input_buffer[0] == 'q' && input_buffer[1] == 0) {
-        s->should_quit = true;
-      } else if (left_arrow_pressed || input_buffer[0] == 'h') {
-        s->selected_node = s->selected_node->parent;
-      } else if (right_arrow_pressed || input_buffer[0] == 'l') {
-        if (s->selected_node->first_child != NULL) {
-          s->selected_node = s->selected_node->first_child;
+      if (s->show_command_palette) {
+        if (esc_pressed) {
+          s->show_command_palette = false;
+        } else if (isAlphaUnderscoreSpace(input_buffer[0])) {
+          stringChunkListAppend(&s->string_arena, &s->cmd_palette_search_input, input_string);
+        } else if (backspace_pressed) {
+          stringChunkListDeleteLast(&s->string_arena, &s->cmd_palette_search_input);
         }
-      } else if (down_arrow_pressed || input_buffer[0] == 'j') {
-        if (s->selected_node->next_sibling != NULL) {
-          s->selected_node = s->selected_node->next_sibling;
+
+        String search = stringChunkToString(&scratch.arena, s->cmd_palette_search_input);
+        Pos2 cursor = renderCommandPalette(tui, search, s->commands);
+        tui->cursor.x = cursor.x;
+        tui->cursor.y = cursor.y;
+      } else {
+        if (input_buffer[0] == 'q' && input_buffer[1] == 0) {
+          s->should_quit = true;
+        } else if (input_buffer[0] == '?') {
+          s->show_command_palette = true;
+        } else if (left_arrow_pressed || input_buffer[0] == 'h') {
+          s->selected_node = s->selected_node->parent;
+        } else if (right_arrow_pressed || input_buffer[0] == 'l') {
+          if (s->selected_node->first_child != NULL) {
+            s->selected_node = s->selected_node->first_child;
+          }
+        } else if (down_arrow_pressed || input_buffer[0] == 'j') {
+          if (s->selected_node->next_sibling != NULL) {
+            s->selected_node = s->selected_node->next_sibling;
+          }
+        } else if (up_arrow_pressed || input_buffer[0] == 'k') {
+          if (s->selected_node->prev_sibling != NULL) {
+            s->selected_node = s->selected_node->prev_sibling;
+          }
+        } else if (input_buffer[0] == 'I' && input_buffer[1] == 0) {
+          // insert sibling ABOVE
+          s->mode = ModeEdit;
+          CNode* new_node = addNodeBeforeSibling(&s->tree, NodeTypeIncomplete, s->selected_node->parent, s->selected_node);
+          s->selected_node = new_node;
+        } else if (input_buffer[0] == 'i' && input_buffer[1] == 0) {
+          // insert sibling BELOW
+          s->mode = ModeEdit;
+          CNode* new_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
+          s->selected_node = new_node;
+        } else if (input_buffer[0] == 'e' && input_buffer[1] == 0) {
+          s->mode = ModeEdit;
+        } else if (input_buffer[0] == 'S' && input_buffer[1] == 0) {
+          /*
+          String data = {
+            .bytes = arenaAllocArray(&permanent_arena, u8, byte_count_of_file),
+            .capacity = byte_count_of_file,
+            .length = byte_count_of_file,
+          };
+          for (u32 i = 0; i < ROOM_TILE_COUNT; i++) {
+            data.bytes[i] = room.background[i];
+            data.bytes[i+ROOM_TILE_COUNT] = room.foreground[i];
+          }
+          if (FILE_EXISTED) {
+            osFileWrite(filename, data);
+          } else {
+            osFileCreateWrite(filename, data);
+          }
+          saved_on = loop_count;
+          */
         }
-      } else if (up_arrow_pressed || input_buffer[0] == 'k') {
-        if (s->selected_node->prev_sibling != NULL) {
-          s->selected_node = s->selected_node->prev_sibling;
-        }
-      } else if (input_buffer[0] == 'I' && input_buffer[1] == 0) {
-        // insert sibling ABOVE
-        s->mode = ModeEdit;
-        CNode* new_node = addNodeBeforeSibling(&s->tree, NodeTypeIncomplete, s->selected_node->parent, s->selected_node);
-        s->selected_node = new_node;
-      } else if (input_buffer[0] == 'i' && input_buffer[1] == 0) {
-        // insert sibling BELOW
-        s->mode = ModeEdit;
-        CNode* new_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
-        s->selected_node = new_node;
-      } else if (input_buffer[0] == 'e' && input_buffer[1] == 0) {
-        s->mode = ModeEdit;
-      } else if (input_buffer[0] == 'S' && input_buffer[1] == 0) {
-        /*
-        String data = {
-          .bytes = arenaAllocArray(&permanent_arena, u8, byte_count_of_file),
-          .capacity = byte_count_of_file,
-          .length = byte_count_of_file,
-        };
-        for (u32 i = 0; i < ROOM_TILE_COUNT; i++) {
-          data.bytes[i] = room.background[i];
-          data.bytes[i+ROOM_TILE_COUNT] = room.foreground[i];
-        }
-        if (FILE_EXISTED) {
-          osFileWrite(filename, data);
-        } else {
-          osFileCreateWrite(filename, data);
-        }
-        saved_on = loop_count;
-        */
       }
     } break;
     case ModeEdit: {
@@ -650,8 +685,17 @@ i32 main(i32 argc, ptr argv[]) {
     .mode = ModeNormal,
   };
   arenaInit(&state.permanent_arena);
+
   arenaInit(&state.string_arena.a);
   state.string_arena.mutex = newMutex();
+
+  state.commands.length = COMMAND_LEN;
+  state.commands.items = arenaAllocArray(&state.permanent_arena, CommandPaletteCommand, state.commands.length);
+  for (u32 i = 0; i < state.commands.length; i++) {
+    state.commands.items[i] = COMMANDS[i];
+  }
+  state.cmd_palette_search_input = allocStringChunkList(&state.string_arena, EMPTY_STRING);
+
   state.views.capacity = 32;
   arenaInit(&state.views.arena);
   state.views.nodes = arenaAllocArray(&state.views.arena, Nodes, state.views.capacity);

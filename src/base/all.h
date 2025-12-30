@@ -481,6 +481,8 @@ fn b32 update(void);
 ///// MATH
 fn Range1u64 range1u64Create(u64 min, u64 max);
 fn Range1u64 mRangeFromNIdxMCount(u64 n_idx, u64 n_count, u64 m_count);
+fn void u32Quicksort(u32 arr[], u32 low, u32 high);
+fn void u32ReverseArray(u32 arr[], u32 size);
 
 ///// MEMORY (Arenas)
 #define ARENA_MAX GB(1)
