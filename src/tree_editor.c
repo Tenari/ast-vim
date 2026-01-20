@@ -11,6 +11,13 @@
 #define COMMAND_LEN (3)
 
 ///// TYPES
+typedef enum Command {
+  CommandInsertSiblingBefore,
+  CommandInsertSiblingAfter,
+  CommandQuit,
+  Command_Count
+} Command;
+
 typedef struct Pointu32 {
   u32 x;
   u32 y;
@@ -106,6 +113,7 @@ typedef struct State {
 } State;
 
 ///// GLOBALS
+// NOTE: keep these .id = fields in sync with `typedef enum Command`
 global const CommandPaletteCommand COMMANDS[COMMAND_LEN] = {
   { .id = 0, .display_name = "Insert Sibling Node Before (I)",
     .description = "Insert a new node on the same conceptual 'level' of the tree.",
@@ -453,6 +461,31 @@ fn PtrArray listMatchingTypes(Arena* a, StringChunkList list) {
   return result;
 }
 
+fn bool doCommand(State* s, u32 cmd_id) {
+  bool result = false;
+  Command cmd_type = (Command)cmd_id;
+  switch (cmd_type) {
+    case CommandInsertSiblingAfter: {
+      // insert sibling BELOW
+      s->mode = ModeEdit;
+      s->selected_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
+      result = true;
+    } break;
+    case CommandInsertSiblingBefore: {
+      // insert sibling ABOVE
+      s->mode = ModeEdit;
+      s->selected_node = addNodeBeforeSibling(&s->tree, NodeTypeIncomplete, s->selected_node->parent, s->selected_node);
+      result = true;
+    } break;
+    case CommandQuit: {
+      s->should_quit = true;
+      result = true;
+    } break;
+    case Command_Count: {} break;
+  }
+  return result;
+}
+
 fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_count) {
   State* s = (State*)state;
   ScratchMem scratch = scratchGet();
@@ -489,23 +522,40 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
   switch (s->mode) {
     case ModeNormal: {
       if (s->show_command_palette) {
+        String search = stringChunkToString(&scratch.arena, s->cmd_palette_search_input);
+
         if (esc_pressed) {
           s->show_command_palette = false;
         } else if (isAlphaUnderscoreSpace(input_buffer[0])) {
           stringChunkListAppend(&s->string_arena, &s->cmd_palette_search_input, input_string);
         } else if (backspace_pressed) {
           stringChunkListDeleteLast(&s->string_arena, &s->cmd_palette_search_input);
+        } else if (up_arrow_pressed) {
+          s->menu_index -= 1;
+        } else if (down_arrow_pressed) {
+          s->menu_index += 1;
+        } else if (enter_pressed) {
+          u32* scores = arenaAllocArray(&scratch.arena, u32, s->commands.length);
+          StringSearchScore* score_details = arenaAllocArray(&scratch.arena, StringSearchScore, s->commands.length);
+          u32 cmd_id = matchCommandPaletteCommands(search, s->commands, s->menu_index, scores, score_details);
+          s->menu_index = 0;
+          s->show_command_palette = false;
+          assert(doCommand(s, cmd_id));
+          break;
         }
 
-        String search = stringChunkToString(&scratch.arena, s->cmd_palette_search_input);
-        Pos2 cursor = renderCommandPalette(tui, search, s->commands);
+        Pos2 cursor = renderCommandPalette(tui, search, s->commands, s->menu_index);
         tui->cursor.x = cursor.x;
         tui->cursor.y = cursor.y;
       } else {
         if (input_buffer[0] == 'q' && input_buffer[1] == 0) {
-          s->should_quit = true;
+          assert(
+              doCommand(s, (u32)CommandQuit)
+              && "CommandQuit failed"
+          );
         } else if (input_buffer[0] == '?') {
           s->show_command_palette = true;
+          s->menu_index = 0;
         } else if (left_arrow_pressed || input_buffer[0] == 'h') {
           s->selected_node = s->selected_node->parent;
         } else if (right_arrow_pressed || input_buffer[0] == 'l') {
@@ -521,15 +571,15 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
             s->selected_node = s->selected_node->prev_sibling;
           }
         } else if (input_buffer[0] == 'I' && input_buffer[1] == 0) {
-          // insert sibling ABOVE
-          s->mode = ModeEdit;
-          CNode* new_node = addNodeBeforeSibling(&s->tree, NodeTypeIncomplete, s->selected_node->parent, s->selected_node);
-          s->selected_node = new_node;
+          assert(
+              doCommand(s, (u32)CommandInsertSiblingBefore)
+              && "CommandInsertSiblingBefore failed"
+          );
         } else if (input_buffer[0] == 'i' && input_buffer[1] == 0) {
-          // insert sibling BELOW
-          s->mode = ModeEdit;
-          CNode* new_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
-          s->selected_node = new_node;
+          assert(
+              doCommand(s, (u32)CommandInsertSiblingAfter)
+              && "CommandInsertSiblingAfter failed"
+          );
         } else if (input_buffer[0] == 'e' && input_buffer[1] == 0) {
           s->mode = ModeEdit;
         } else if (input_buffer[0] == 'S' && input_buffer[1] == 0) {

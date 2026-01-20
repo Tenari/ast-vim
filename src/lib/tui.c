@@ -24,6 +24,7 @@
 #define ANSI_HIGHLIGHT_BLUE (12)
 #define ANSI_DULL_GRAY (7)
 #define ANSI_HIGHLIGHT_GRAY (16)
+#define MAX_COMMAND_PALETTE_COMMANDS (1000)
 
 ///// TYPES
 typedef struct Pixel {
@@ -61,6 +62,17 @@ typedef struct CommandPaletteCommandList {
   u32 length;
   CommandPaletteCommand* items;
 } CommandPaletteCommandList;
+
+typedef struct StringSearchScore {
+  bool name_matched;
+  bool description_matched;
+  u16 tag_match_count;
+  u32 score;
+  u32 name_match_start;
+  u32 name_match_len;
+  u32 description_match_start;
+  u32 description_match_len;
+} StringSearchScore;
 
 ///// Functions()
 fn u32 rgbToNum(RGB rgb) {
@@ -170,6 +182,16 @@ fn void renderStrToBufferMaxWidth(Pixel* buf, u16 x, u16 y, str text, u16 width,
   for (u32 i = 0; i < strlen(text); i++) {
     buf[pos + (i % width)].background = 0;
     buf[pos + (i % width)].foreground = 0;
+    buf[pos + (i % width)].bytes[0] = text[i];
+    if (i % width == (width-1)) {     // on last char i inside width
+      pos += screen_dimensions.width; // move pos to next line
+    }
+  }
+}
+
+fn void renderStrToBufferMaxWidthWithoutChangingColor(Pixel* buf, u16 x, u16 y, str text, u16 width, Dim2 screen_dimensions) {
+  u32 pos = x + (screen_dimensions.width*y);
+  for (u32 i = 0; i < strlen(text); i++) {
     buf[pos + (i % width)].bytes[0] = text[i];
     if (i % width == (width-1)) {     // on last char i inside width
       pos += screen_dimensions.width; // move pos to next line
@@ -356,10 +378,44 @@ fn void printfBufferAndSwap(TuiState* tui) {
   tui->redraw = false;
 }
 
-fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPaletteCommandList commands) {
+fn u32 matchCommandPaletteCommands(String current_search, CommandPaletteCommandList commands, u32 menu_index, u32* scores, StringSearchScore* score_details) {
+  // returns the `commands` id that matches the `menu_index`
+  for (u32 i = 0; i < commands.length; i++) {
+    CommandPaletteCommand* cmd = &commands.items[i];
+    bool name_matches = false;
+    for (u32 j = 0; j < strlen(cmd->display_name); j++) {
+      if (current_search.length > 0 && lowerAscii(cmd->display_name[j]) == lowerAscii(current_search.bytes[0])) {
+        for (u32 k = 0; k < current_search.length && k+j < strlen(cmd->display_name); k++) {
+          if (lowerAscii(current_search.bytes[k]) != lowerAscii(cmd->display_name[j+k])) {
+            break;
+          }
+          if (k == current_search.length - 1) {
+            name_matches = true;
+            score_details[i].name_match_start = j;
+            score_details[i].name_match_len = current_search.length;
+          }
+        }
+      }
+    }
+    bool description_matches = false;
+    u32 tag_match_count = 0;
+    scores[i] = (name_matches * 100 * MAX_COMMAND_PALETTE_COMMANDS) +
+                (description_matches * 10 * MAX_COMMAND_PALETTE_COMMANDS) +
+                (tag_match_count * MAX_COMMAND_PALETTE_COMMANDS) +
+                cmd->id;
+    score_details[i].score = scores[i];
+    score_details[i].name_matched = name_matches;
+    score_details[i].description_matched = description_matches;
+    score_details[i].tag_match_count = tag_match_count;
+  }
+  u32Quicksort(scores, 0, commands.length - 1);
+  u32ReverseArray(scores, commands.length);
+  return (scores[menu_index] % MAX_COMMAND_PALETTE_COMMANDS);
+}
+
+fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPaletteCommandList commands, u32 menu_index) {
   // returns the cursor position as Pos2
 
-  u32 MAX_COMMAND_PALETTE_COMMANDS = 1000;
   ScratchMem scratch = scratchGet();
   Dim2 sd = tui->screen_dimensions;
   Pos2 result = { 0 };
@@ -384,35 +440,27 @@ fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPalett
 
   // sort the command options
   u32* scores = arenaAllocArray(&scratch.arena, u32, commands.length);
-  for (u32 i = 0; i < commands.length; i++) {
-    CommandPaletteCommand* cmd = &commands.items[i];
-    bool name_matches = false;
-    for (u32 j = 0; j < strlen(cmd->display_name); j++) {
-      if (current_search.length > 0 && cmd->display_name[j] == current_search.bytes[0]) {
-        for (u32 k = 0; k < current_search.length && k+j < strlen(cmd->display_name); k++) {
-          if (current_search.bytes[k] != cmd->display_name[j+k]) {
-            break;
-          }
-          if (k == current_search.length - 1) {
-            name_matches = true;
-          }
-        }
-      }
-    }
-    bool description_matches = false;
-    u32 tag_match_count = 0;
-    scores[i] = (name_matches * 100 * MAX_COMMAND_PALETTE_COMMANDS) +
-                (tag_match_count * 10 * MAX_COMMAND_PALETTE_COMMANDS) +
-                (description_matches * MAX_COMMAND_PALETTE_COMMANDS) +
-                cmd->id;
-  }
-  u32Quicksort(scores, 0, commands.length - 1);
-  u32ReverseArray(scores, commands.length);
+  StringSearchScore* score_details = arenaAllocArray(&scratch.arena, StringSearchScore, commands.length);
+  matchCommandPaletteCommands(current_search, commands, menu_index, scores, score_details);
+
   // draw the command options
   u32 x = outline.x + 1;
   u32 y = outline.y + 3;
-  for (u32 i = 0; (y-outline.y) < (outline.height-1) && i < commands.length; i++) {
+  for (u32 i = 0; (y-outline.y) < (outline.height-1) && i < commands.length; i++, y+=2) {
+    if (i == menu_index) {
+      for (u32 ii = 0; ii < outline.width-1; ii++) {
+        u32 pos = XYToPos(x+ii, y, tui->screen_dimensions.width);
+        tui->frame_buffer[pos].bytes[0] = ' ';
+        tui->frame_buffer[pos].foreground = ANSI_BLACK;
+        tui->frame_buffer[pos].background = ANSI_WHITE;
+        pos = XYToPos(x+ii, y+1, tui->screen_dimensions.width);
+        tui->frame_buffer[pos].bytes[0] = ' ';
+        tui->frame_buffer[pos].foreground = ANSI_BLACK;
+        tui->frame_buffer[pos].background = ANSI_WHITE;
+      }
+    }
     u32 id = scores[i] % MAX_COMMAND_PALETTE_COMMANDS;
+    StringSearchScore score = score_details[id];
     CommandPaletteCommand* cmd = NULL;
     for (u32 j = 0; j < commands.length; j++) {
       if (commands.items[j].id == id) {
@@ -421,9 +469,23 @@ fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPalett
       }
     }
     assert(cmd != NULL);
-    renderStrToBufferMaxWidth(tui->frame_buffer, x, y, cmd->display_name, outline.width - 2, sd);
-    renderStrToBufferMaxWidth(tui->frame_buffer, x, y+1, cmd->description, outline.width - 2, sd);
-    y += 2;
+    if (score.name_matched) {
+      u32 end_idx = score.name_match_len + score.name_match_start;
+      for (u32 ii = 0; ii < strlen(cmd->display_name); ii++) {
+        u32 pos = XYToPos(x+ii, y, tui->screen_dimensions.width);
+        if (ii >= score.name_match_start && ii < end_idx) {
+          if (i == menu_index) {
+            tui->frame_buffer[pos].foreground = ANSI_DULL_RED;
+          } else {
+            tui->frame_buffer[pos].foreground = ANSI_HIGHLIGHT_YELLOW;
+          }
+        }
+        tui->frame_buffer[pos].bytes[0] = cmd->display_name[ii];
+      }
+    } else {
+      renderStrToBufferMaxWidthWithoutChangingColor(tui->frame_buffer, x, y, cmd->display_name, outline.width - 2, sd);
+    }
+    renderStrToBufferMaxWidthWithoutChangingColor(tui->frame_buffer, x, y+1, cmd->description, outline.width - 2, sd);
   }
 
   scratchReturn(&scratch);
