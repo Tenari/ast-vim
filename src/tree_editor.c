@@ -8,13 +8,14 @@
 #define GOAL_INPUT_LOOPS_PER_S 60
 #define GOAL_INPUT_LOOP_US 1000000/GOAL_INPUT_LOOPS_PER_S
 #define PRIMITIVE_TYPE_COUNT (30)
-#define COMMAND_LEN (3)
 
 ///// TYPES
 typedef enum Command {
   CommandInsertSiblingBefore,
   CommandInsertSiblingAfter,
   CommandQuit,
+  CommandMoveToParent,
+  CommandMoveToFirstChild,
   Command_Count
 } Command;
 
@@ -114,7 +115,7 @@ typedef struct State {
 
 ///// GLOBALS
 // NOTE: keep these .id = fields in sync with `typedef enum Command`
-global const CommandPaletteCommand COMMANDS[COMMAND_LEN] = {
+global const CommandPaletteCommand COMMANDS[Command_Count] = {
   { .id = 0, .display_name = "Insert Sibling Node Before (I)",
     .description = "Insert a new node on the same conceptual 'level' of the tree.",
     .tags = {"new node", "insert", "sibling", "add node", "add item", "add element", "new item", "new element"},
@@ -126,6 +127,14 @@ global const CommandPaletteCommand COMMANDS[COMMAND_LEN] = {
   { .id = 2, .display_name = "Quit (q)",
     .description = "Quit the application.",
     .tags = {"quit", "exit", "close"},
+  },
+  { .id = 3, .display_name = "Move to Parent Node (h/←)",
+    .description = "Move the cursor to the node's parent node.",
+    .tags = {"parent", "move", "up", "left"},
+  },
+  { .id = 4, .display_name = "Move to First Child Node (l/→)",
+    .description = "Move the cursor to the node's first child node.",
+    .tags = {"child", "move", "down", "right"},
   },
 };
 
@@ -462,26 +471,35 @@ fn PtrArray listMatchingTypes(Arena* a, StringChunkList list) {
 }
 
 fn bool doCommand(State* s, u32 cmd_id) {
-  bool result = false;
+  bool result = true;
   Command cmd_type = (Command)cmd_id;
   switch (cmd_type) {
     case CommandInsertSiblingAfter: {
       // insert sibling BELOW
       s->mode = ModeEdit;
       s->selected_node = addNode(&s->tree, NodeTypeIncomplete, s->selected_node->parent);
-      result = true;
     } break;
     case CommandInsertSiblingBefore: {
       // insert sibling ABOVE
       s->mode = ModeEdit;
       s->selected_node = addNodeBeforeSibling(&s->tree, NodeTypeIncomplete, s->selected_node->parent, s->selected_node);
-      result = true;
+    } break;
+    case CommandMoveToParent: {
+      s->selected_node = s->selected_node->parent;
+    } break;
+    case CommandMoveToFirstChild: {
+      if (s->selected_node->first_child != NULL) {
+        s->selected_node = s->selected_node->first_child;
+      }
     } break;
     case CommandQuit: {
       s->should_quit = true;
-      result = true;
     } break;
-    case Command_Count: {} break;
+
+    default:
+    case Command_Count:
+      result = false;
+    break;
   }
   return result;
 }
@@ -534,7 +552,7 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           s->menu_index -= 1;
         } else if (down_arrow_pressed) {
           s->menu_index += 1;
-        } else if (enter_pressed) {
+        } else if (enter_pressed || tab_pressed) {
           u32* scores = arenaAllocArray(&scratch.arena, u32, s->commands.length);
           StringSearchScore* score_details = arenaAllocArray(&scratch.arena, StringSearchScore, s->commands.length);
           u32 cmd_id = matchCommandPaletteCommands(search, s->commands, s->menu_index, scores, score_details);
@@ -557,11 +575,9 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
           s->show_command_palette = true;
           s->menu_index = 0;
         } else if (left_arrow_pressed || input_buffer[0] == 'h') {
-          s->selected_node = s->selected_node->parent;
+          doCommand(s, (u32)CommandMoveToParent);
         } else if (right_arrow_pressed || input_buffer[0] == 'l') {
-          if (s->selected_node->first_child != NULL) {
-            s->selected_node = s->selected_node->first_child;
-          }
+          doCommand(s, (u32)CommandMoveToFirstChild);
         } else if (down_arrow_pressed || input_buffer[0] == 'j') {
           if (s->selected_node->next_sibling != NULL) {
             s->selected_node = s->selected_node->next_sibling;
@@ -571,15 +587,9 @@ fn bool updateAndRender(TuiState* tui, void* state, u8* input_buffer, u64 loop_c
             s->selected_node = s->selected_node->prev_sibling;
           }
         } else if (input_buffer[0] == 'I' && input_buffer[1] == 0) {
-          assert(
-              doCommand(s, (u32)CommandInsertSiblingBefore)
-              && "CommandInsertSiblingBefore failed"
-          );
+          doCommand(s, (u32)CommandInsertSiblingBefore);
         } else if (input_buffer[0] == 'i' && input_buffer[1] == 0) {
-          assert(
-              doCommand(s, (u32)CommandInsertSiblingAfter)
-              && "CommandInsertSiblingAfter failed"
-          );
+          doCommand(s, (u32)CommandInsertSiblingAfter);
         } else if (input_buffer[0] == 'e' && input_buffer[1] == 0) {
           s->mode = ModeEdit;
         } else if (input_buffer[0] == 'S' && input_buffer[1] == 0) {
@@ -739,7 +749,7 @@ i32 main(i32 argc, ptr argv[]) {
   arenaInit(&state.string_arena.a);
   state.string_arena.mutex = newMutex();
 
-  state.commands.length = COMMAND_LEN;
+  state.commands.length = Command_Count;
   state.commands.items = arenaAllocArray(&state.permanent_arena, CommandPaletteCommand, state.commands.length);
   for (u32 i = 0; i < state.commands.length; i++) {
     state.commands.items[i] = COMMANDS[i];

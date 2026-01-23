@@ -478,6 +478,7 @@ fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPalett
             tui->frame_buffer[pos].foreground = ANSI_DULL_RED;
           } else {
             tui->frame_buffer[pos].foreground = ANSI_HIGHLIGHT_YELLOW;
+            tui->frame_buffer[pos].background = 0;
           }
         }
         tui->frame_buffer[pos].bytes[0] = cmd->display_name[ii];
